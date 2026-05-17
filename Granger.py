@@ -7,10 +7,11 @@ import numpy as np
 import pandas as pd
 import pandas_datareader.data as web
 import scipy.stats as stats
+import statsmodels.api as sm
 import yfinance as yf
 from copulas.bivariate import Bivariate
 from pandas_datareader import data as web
-from statsmodels.tsa.stattools import adfuller, grangercausalitytests
+from statsmodels.tsa.stattools import adfuller, coint, grangercausalitytests
 
 
 def adf_test(series, name):
@@ -24,41 +25,7 @@ def adf_test(series, name):
         print(f"{name} is stationary.\n")
 
 
-def main():
-    adf_test(country_data["chrstgenpct"], "Christian Population")
-    adf_test(country_data["islmgenpct"], "Muslim Population")
-    from statsmodels.tsa.stattools import coint
-
-    coint_stat, p_value, critical_values = coint(
-        country_data["chrstgenpct"], country_data["islmgenpct"]
-    )
-    print("Engle-Granger Cointegration Test:")
-    print(f"Test Statistic: {coint_stat:.4f}")
-    print(f"P-Value: {p_value:.4f}")
-    print(f"Critical Values: {critical_values}")
-    if p_value < 0.05:
-        print("The two series are cointegrated.")
-    else:
-        print("The two series are not cointegrated.")
-    import statsmodels.api as sm
-
-    X = sm.add_constant(country_data["islmgenpct"])
-    y = country_data["chrstgenpct"]
-    model = sm.OLS(y, X).fit()
-    print(model.summary())
-    plt.figure(figsize=(10, 6))
-    plt.plot(country_data["year"], model.resid, label="Residuals")
-    plt.axhline(0, linestyle="--", color="red", label="Zero Line")
-    plt.title("Residuals of Linear Regression (% Christian ~ % Muslim)")
-    plt.xlabel("Year")
-    plt.ylabel("Residual")
-    plt.legend()
-    plt.grid()
-    plt.show()
-    adf_test(model.resid, "Regression Residuals")
-
-
-def main() -> None:
+def fetch_data_from_fred() -> None:
     start_date, end_date = ("2010-01-01", "2022-12-31")
 
     df = pd.concat(
@@ -119,6 +86,8 @@ def main() -> None:
         df[["unemployment_rate_diff", "consumer_spending_diff"]].dropna(), maxlag=4
     )
 
+
+def set_seed_for_reproducibility() -> None:
     np.random.seed(42)
 
     interest_rate_data = web.DataReader(
@@ -179,6 +148,8 @@ def main() -> None:
 
     plt.show()
 
+
+def set_seed_for_reproducibility_2() -> None:
     np.random.seed(42)
 
     inflation = web.DataReader(
@@ -243,6 +214,8 @@ def main() -> None:
 
     plt.show()
 
+
+def load_your_dataset() -> None:
     file_path = "WRP_national.csv"
 
     wrp_data = pd.read_csv(file_path)
@@ -277,7 +250,61 @@ def main() -> None:
 
     plt.show()
 
-    main()
+    adf_test(country_data["chrstgenpct"], "Christian Population")
+
+    adf_test(country_data["islmgenpct"], "Muslim Population")
+
+    coint_stat, p_value, critical_values = coint(
+        country_data["chrstgenpct"], country_data["islmgenpct"]
+    )
+
+    print("Engle-Granger Cointegration Test:")
+
+    print(f"Test Statistic: {coint_stat:.4f}")
+
+    print(f"P-Value: {p_value:.4f}")
+
+    print(f"Critical Values: {critical_values}")
+
+    if p_value < 0.05:
+        print("The two series are cointegrated.")
+    else:
+        print("The two series are not cointegrated.")
+
+    X = sm.add_constant(country_data["islmgenpct"])
+
+    y = country_data["chrstgenpct"]
+
+    model = sm.OLS(y, X).fit()
+
+    print(model.summary())
+
+    plt.figure(figsize=(10, 6))
+
+    plt.plot(country_data["year"], model.resid, label="Residuals")
+
+    plt.axhline(0, linestyle="--", color="red", label="Zero Line")
+
+    plt.title("Residuals of Linear Regression (% Christian ~ % Muslim)")
+
+    plt.xlabel("Year")
+
+    plt.ylabel("Residual")
+
+    plt.legend()
+
+    plt.grid()
+
+    plt.show()
+
+    adf_test(model.resid, "Regression Residuals")
+
+
+def main() -> None:
+    fetch_data_from_fred()
+    set_seed_for_reproducibility()
+    set_seed_for_reproducibility_2()
+    load_your_dataset()
 
 
 if __name__ == "__main__":
