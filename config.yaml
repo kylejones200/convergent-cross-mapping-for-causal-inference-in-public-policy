@@ -1,0 +1,52 @@
+random_seed: 42
+show_plots: false
+
+output_dir: .
+
+fred_unemployment_spending:
+  enabled: true
+  start_date: "2010-01-01"
+  end_date: "2022-12-31"
+  series:
+    - id: UNRATE
+      column: unemployment_rate
+    - id: PCE
+      column: consumer_spending
+  csv_output: unemployment_spending.csv
+  plot:
+    path: unemployment_consumer_spending.png
+    figsize: [10, 6]
+    title: Unemployment Rate and Consumer Spending Over Time
+  granger:
+    maxlag: 4
+
+copula_stock_interest:
+  enabled: true
+  fred_series: MORTGAGE30US
+  yfinance_ticker: "^GSPC"
+  start_date: "2000-01-01"
+  end_date: "2025-01-01"
+  n_samples: 100
+  plot:
+    path: copula_forecast_stock_interest_real_data.png
+    figsize: [10, 7]
+
+copula_inflation_unemployment:
+  enabled: true
+  inflation_series: FPCPITOTLZGUSA
+  unemployment_series: UNRATE
+  start_date: "2000-01-01"
+  end_date: "2025-01-01"
+  n_samples: 100
+  plot:
+    path_template: "{copula}_copula_forecast_inflation_unemployment.png"
+    figsize: [10, 7]
+
+wrp_dataset:
+  enabled: true
+  file_path: ../transfer-learning-for-time-series-analysis-in-python/WRP_national.csv
+  country: USA
+  columns:
+    year: year
+    christian: chrstgenpct
+    muslim: islmgenpct

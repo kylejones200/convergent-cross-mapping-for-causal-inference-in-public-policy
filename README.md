@@ -11,14 +11,7 @@ Standard causal models break down when policies and outcomes influence each othe
 
 CCM comes from nonlinear time series analysis. It uses state-space reconstruction to test whether one variable predicts another. If historical values of X improve the prediction of Y, then X influences Y. If the reverse does not hold, the effect runs in one direction. If both variables predict each other, feedback exists. CCM strengthens with more data. A genuine causal relationship improves prediction as the dataset grows.
 
-## About
 
-Place the code for this article in this repository.
-The original article export is saved as `article.md`.
-
-## Files
-
-Add your `.ipynb`, `.py`, `.yaml`, `.js`, `.ts`, or other project files here.
 
 ## Disclaimer
 

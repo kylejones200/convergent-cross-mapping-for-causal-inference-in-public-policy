@@ -1,6 +1,10 @@
-"""Generated from Jupyter notebook: Granger
+"""Granger causality, cointegration, and copula analysis driven by config.yaml."""
 
-Magics and shell lines are commented out. Run with a normal Python interpreter."""
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -8,12 +12,41 @@ import pandas as pd
 import pandas_datareader.data as web
 import scipy.stats as stats
 import statsmodels.api as sm
+import yaml
 import yfinance as yf
 from copulas.bivariate import Bivariate
 from statsmodels.tsa.stattools import adfuller, coint, grangercausalitytests
 
+REPO_ROOT = Path(__file__).resolve().parent
+DEFAULT_CONFIG_PATH = REPO_ROOT / "config.yaml"
 
-def adf_test(series, name):
+
+def load_config(config_path: Path | None = None) -> dict[str, Any]:
+    path = config_path or DEFAULT_CONFIG_PATH
+    if not path.is_file():
+        raise FileNotFoundError(f"Config not found: {path}")
+    with path.open(encoding="utf-8") as handle:
+        data = yaml.safe_load(handle)
+    if not isinstance(data, dict):
+        raise ValueError(f"Expected mapping in {path}, got {type(data).__name__}")
+    return data
+
+
+def _output_path(config: dict[str, Any], relative: str) -> Path:
+    base = Path(config.get("output_dir", "."))
+    if not base.is_absolute():
+        base = REPO_ROOT / base
+    return base / relative
+
+
+def _maybe_show(config: dict[str, Any]) -> None:
+    if config.get("show_plots", False):
+        plt.show()
+    else:
+        plt.close()
+
+
+def adf_test(series: pd.Series, name: str) -> None:
     result = adfuller(series)
     print(f"ADF Test for {name}:")
     print(f"Test Statistic: {result[0]:.4f}")
@@ -24,27 +57,35 @@ def adf_test(series, name):
         print(f"{name} is stationary.\n")
 
 
-def fetch_data_from_fred() -> None:
-    start_date, end_date = ("2010-01-01", "2022-12-31")
-    df = pd.concat(
-        [
-            web.DataReader("UNRATE", "fred", start_date, end_date),
-            web.DataReader("PCE", "fred", start_date, end_date),
-        ],
-        axis=1,
-    ).rename(columns={"UNRATE": "unemployment_rate", "PCE": "consumer_spending"})
-    df = df.reset_index().rename(columns={"DATE": "date"})
-    df.to_csv("unemployment_spending.csv", index=False)
-    fig, ax1 = plt.subplots(figsize=(10, 6))
-    ax1.set_title("Unemployment Rate and Consumer Spending Over Time")
+def fetch_data_from_fred(config: dict[str, Any]) -> None:
+    section = config["fred_unemployment_spending"]
+    start_date = section["start_date"]
+    end_date = section["end_date"]
+    frames = [
+        web.DataReader(entry["id"], "fred", start_date, end_date).rename(
+            columns={entry["id"]: entry["column"]}
+        )
+        for entry in section["series"]
+    ]
+    df = pd.concat(frames, axis=1).reset_index().rename(columns={"DATE": "date"})
+    csv_path = _output_path(config, section["csv_output"])
+    df.to_csv(csv_path, index=False)
+    print(f"Wrote {csv_path}")
+
+    plot_cfg = section["plot"]
+    fig, ax1 = plt.subplots(figsize=tuple(plot_cfg["figsize"]))
+    ax1.set_title(plot_cfg["title"])
     ax1.set_xlabel("Year")
     ax1.set_ylabel("Unemployment Rate (%)", color="red")
     ax1.plot(df["date"], df["unemployment_rate"], color="red")
     ax2 = ax1.twinx()
     ax2.set_ylabel("Consumer Spending (Billions)", color="blue")
     ax2.plot(df["date"], df["consumer_spending"], color="blue")
-    plt.savefig("unemployment_consumer_spending.png")
-    plt.show()
+    plot_path = _output_path(config, plot_cfg["path"])
+    plt.savefig(plot_path)
+    print(f"Wrote {plot_path}")
+    _maybe_show(config)
+
     for col in ["unemployment_rate", "consumer_spending"]:
         adf_result = adfuller(df[col])
         print(f"{col} ADF Statistic: {adf_result[0]:.3f}, p-value: {adf_result[1]:.3f}")
@@ -55,24 +96,35 @@ def fetch_data_from_fred() -> None:
         adf_result = adfuller(df[col].dropna())
         print(f"{col} ADF Statistic: {adf_result[0]:.3f}, p-value: {adf_result[1]:.3f}")
 
+    maxlag = section["granger"]["maxlag"]
     print("\nGranger Causality Tests:")
     print("Does unemployment rate Granger-cause consumer spending?")
     grangercausalitytests(
-        df[["consumer_spending_diff", "unemployment_rate_diff"]].dropna(), maxlag=4
+        df[["consumer_spending_diff", "unemployment_rate_diff"]].dropna(),
+        maxlag=maxlag,
     )
     print("\nDoes consumer spending Granger-cause unemployment rate?")
     grangercausalitytests(
-        df[["unemployment_rate_diff", "consumer_spending_diff"]].dropna(), maxlag=4
+        df[["unemployment_rate_diff", "consumer_spending_diff"]].dropna(),
+        maxlag=maxlag,
     )
 
 
-def set_seed_for_reproducibility() -> None:
-    np.random.seed(42)
+def run_copula_stock_interest(config: dict[str, Any]) -> None:
+    section = config["copula_stock_interest"]
+    np.random.seed(config.get("random_seed", 42))
     interest_rate_data = web.DataReader(
-        "MORTGAGE30US", "fred", start="2000-01-01", end="2025-01-01"
+        section["fred_series"],
+        "fred",
+        start=section["start_date"],
+        end=section["end_date"],
     )
     interest_rate_data.dropna(inplace=True)
-    stock_data = yf.download("^GSPC", start="2000-01-01", end="2025-01-01")
+    stock_data = yf.download(
+        section["yfinance_ticker"],
+        start=section["start_date"],
+        end=section["end_date"],
+    )
     stock_returns = stock_data["Close"].pct_change().dropna()
     data = pd.concat([stock_returns, interest_rate_data], axis=1, join="inner").dropna()
     data.columns = ["Stock Returns", "Interest Rates"]
@@ -83,32 +135,43 @@ def set_seed_for_reproducibility() -> None:
     best_copula = Bivariate.select_copula(uv)
     print(f"Selected Copula: {best_copula.copula_type.name}")
     best_copula.fit(uv)
-    samples = best_copula.sample(100)
+    samples = best_copula.sample(section["n_samples"])
     u_future = samples[:, 0]
     v_future = samples[:, 1]
     returns_forecast = np.quantile(data["Stock Returns"], u_future)
     rates_forecast = np.quantile(data["Interest Rates"], v_future)
-    plt.figure(figsize=(10, 7))
+    plot_cfg = section["plot"]
+    plt.figure(figsize=tuple(plot_cfg["figsize"]))
     plt.scatter(
         returns_forecast, rates_forecast, alpha=0.5, edgecolors="k", linewidths=0.5
     )
     plt.xlabel("Forecasted Stock Returns")
     plt.ylabel("Forecasted Interest Rates")
     plt.title(
-        f"Forecasted Stock Returns vs. Interest Rates ({best_copula.copula_type.name.capitalize()} Copula)"
+        f"Forecasted Stock Returns vs. Interest Rates "
+        f"({best_copula.copula_type.name.capitalize()} Copula)"
     )
     plt.grid(False)
-    plt.savefig("copula_forecast_stock_interest_real_data.png")
-    plt.show()
+    plot_path = _output_path(config, plot_cfg["path"])
+    plt.savefig(plot_path)
+    print(f"Wrote {plot_path}")
+    _maybe_show(config)
 
 
-def set_seed_for_reproducibility_2() -> None:
-    np.random.seed(42)
+def run_copula_inflation_unemployment(config: dict[str, Any]) -> None:
+    section = config["copula_inflation_unemployment"]
+    np.random.seed(config.get("random_seed", 42))
     inflation = web.DataReader(
-        "FPCPITOTLZGUSA", "fred", start="2000-01-01", end="2025-01-01"
+        section["inflation_series"],
+        "fred",
+        start=section["start_date"],
+        end=section["end_date"],
     )
     unemployment = web.DataReader(
-        "UNRATE", "fred", start="2000-01-01", end="2025-01-01"
+        section["unemployment_series"],
+        "fred",
+        start=section["start_date"],
+        end=section["end_date"],
     )
     data = pd.concat([inflation, unemployment], axis=1, join="inner").dropna()
     data.columns = ["Inflation", "Unemployment"]
@@ -119,12 +182,13 @@ def set_seed_for_reproducibility_2() -> None:
     best_copula = Bivariate.select_copula(uv)
     print(f"Best copula selected: {best_copula.copula_type.name}")
     best_copula.fit(uv)
-    samples = best_copula.sample(100)
+    samples = best_copula.sample(section["n_samples"])
     u_future = samples[:, 0]
     v_future = samples[:, 1]
     inflation_forecast = np.quantile(data["Inflation"], u_future)
     unemployment_forecast = np.quantile(data["Unemployment"], v_future)
-    plt.figure(figsize=(10, 7))
+    plot_cfg = section["plot"]
+    plt.figure(figsize=tuple(plot_cfg["figsize"]))
     plt.scatter(
         inflation_forecast,
         unemployment_forecast,
@@ -135,38 +199,60 @@ def set_seed_for_reproducibility_2() -> None:
     plt.xlabel("Forecasted Inflation Rate (%)")
     plt.ylabel("Forecasted Unemployment Rate (%)")
     plt.title(
-        f"Inflation vs. Unemployment Forecast ({best_copula.copula_type.name.capitalize()} Copula Model)"
+        f"Inflation vs. Unemployment Forecast "
+        f"({best_copula.copula_type.name.capitalize()} Copula Model)"
     )
     plt.grid(False)
-    plt.savefig(
-        f"{best_copula.copula_type.name.lower()}_copula_forecast_inflation_unemployment.png"
+    plot_name = plot_cfg["path_template"].format(
+        copula=best_copula.copula_type.name.lower()
     )
-    plt.show()
+    plot_path = _output_path(config, plot_name)
+    plt.savefig(plot_path)
+    print(f"Wrote {plot_path}")
+    _maybe_show(config)
 
 
-def load_your_dataset() -> None:
-    file_path = "WRP_national.csv"
+def load_your_dataset(config: dict[str, Any]) -> None:
+    section = config["wrp_dataset"]
+    file_path = _output_path(config, section["file_path"])
+    if not file_path.is_file():
+        print(f"Skipping WRP analysis: data file not found at {file_path}")
+        return
+
     wrp_data = pd.read_csv(file_path)
     print(wrp_data.info())
     print(wrp_data.head())
-    name = "USA"
-    country_data = wrp_data[wrp_data["name"] == name][
-        ["year", "chrstgenpct", "islmgenpct"]
+
+    country = section["country"]
+    cols = section["columns"]
+    country_data = wrp_data[wrp_data["name"] == country][
+        [cols["year"], cols["christian"], cols["muslim"]]
     ].dropna()
-    country_data = country_data.sort_values("year")
+    country_data = country_data.sort_values(cols["year"])
+
     plt.figure(figsize=(10, 6))
-    plt.plot(country_data["year"], country_data["chrstgenpct"], label="% Christian")
-    plt.plot(country_data["year"], country_data["islmgenpct"], label="% Muslim")
+    plt.plot(
+        country_data[cols["year"]],
+        country_data[cols["christian"]],
+        label="% Christian",
+    )
+    plt.plot(
+        country_data[cols["year"]],
+        country_data[cols["muslim"]],
+        label="% Muslim",
+    )
     plt.title(f"Religious Population Trends in {country}")
     plt.xlabel("Year")
     plt.ylabel("Population (%)")
     plt.legend()
     plt.grid()
-    plt.show()
-    adf_test(country_data["chrstgenpct"], "Christian Population")
-    adf_test(country_data["islmgenpct"], "Muslim Population")
+    _maybe_show(config)
+
+    adf_test(country_data[cols["christian"]], "Christian Population")
+    adf_test(country_data[cols["muslim"]], "Muslim Population")
+
     coint_stat, p_value, critical_values = coint(
-        country_data["chrstgenpct"], country_data["islmgenpct"]
+        country_data[cols["christian"]], country_data[cols["muslim"]]
     )
     print("Engle-Granger Cointegration Test:")
     print(f"Test Statistic: {coint_stat:.4f}")
@@ -177,27 +263,46 @@ def load_your_dataset() -> None:
     else:
         print("The two series are not cointegrated.")
 
-    X = sm.add_constant(country_data["islmgenpct"])
-    y = country_data["chrstgenpct"]
+    X = sm.add_constant(country_data[cols["muslim"]])
+    y = country_data[cols["christian"]]
     model = sm.OLS(y, X).fit()
     print(model.summary())
+
     plt.figure(figsize=(10, 6))
-    plt.plot(country_data["year"], model.resid, label="Residuals")
+    plt.plot(country_data[cols["year"]], model.resid, label="Residuals")
     plt.axhline(0, linestyle="--", color="red", label="Zero Line")
     plt.title("Residuals of Linear Regression (% Christian ~ % Muslim)")
     plt.xlabel("Year")
     plt.ylabel("Residual")
     plt.legend()
     plt.grid()
-    plt.show()
+    _maybe_show(config)
     adf_test(model.resid, "Regression Residuals")
 
 
-def main() -> None:
-    fetch_data_from_fred()
-    set_seed_for_reproducibility()
-    set_seed_for_reproducibility_2()
-    load_your_dataset()
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run Granger/copula analysis from YAML.")
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=DEFAULT_CONFIG_PATH,
+        help="Path to config.yaml (default: beside this script)",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
+    config = load_config(args.config)
+
+    if config.get("fred_unemployment_spending", {}).get("enabled", True):
+        fetch_data_from_fred(config)
+    if config.get("copula_stock_interest", {}).get("enabled", True):
+        run_copula_stock_interest(config)
+    if config.get("copula_inflation_unemployment", {}).get("enabled", True):
+        run_copula_inflation_unemployment(config)
+    if config.get("wrp_dataset", {}).get("enabled", True):
+        load_your_dataset(config)
 
 
 if __name__ == "__main__":
